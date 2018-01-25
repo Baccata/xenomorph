@@ -2,7 +2,7 @@ package xenomorph.runtime
 
 import monocle.Getter
 import xenomorph.Schema.Schema
-import xenomorph.{PropSchema, Schema}
+import xenomorph.{PropSchema, Required, Schema}
 
 import scalaz.FreeAp
 
@@ -28,6 +28,8 @@ object Runtime {
 
   type DSchema[P[_], A] = Schema[DynamicSchemaF[P, ?], A]
 
+  type DPropSchema[P[_]] = PropSchema[RuntimeModel, DSchema[P, ?], RuntimeModel]
+
   type DProp[P[_]] = FreeAp[PropSchema[RuntimeModel, DSchema[P, ?], ?], RuntimeModel]
 
   def prim[P[_]](pi: P[i] forSome { type i }): DSchema[P, RuntimeModel] =
@@ -38,8 +40,13 @@ object Runtime {
     case model => Fix(NotRecordFieldAccess(fieldName, model))
   }
 
+  def req[P[_]](fieldName: String, valueSchema: DSchema[P, RuntimeModel]) : DPropSchema[P] =
+    Required(fieldName, valueSchema, fieldGetter(fieldName), None)
+
   def required[P[_]](fieldName: String, valueSchema: DSchema[P, RuntimeModel]): DProp[P] =
     Schema.required[DynamicSchemaF[P, ?], RuntimeModel, RuntimeModel](fieldName, valueSchema, fieldGetter(fieldName))
+
+
 
   private def optionalFieldGetter(fieldName : String) : Getter[RuntimeModel, RuntimeModel] = {
     case Fix(RuntimeRecord(map)) => Fix(RuntimeOptionalValue(map.get(fieldName)))
@@ -49,6 +56,18 @@ object Runtime {
   def optional[P[_]](fieldName: String, valueSchema: DSchema[P, RuntimeModel]): DProp[P] =
     Schema.required[DynamicSchemaF[P, ?], RuntimeModel, RuntimeModel](fieldName, valueSchema, optionalFieldGetter(fieldName))
 
+
+  import scalaz.syntax.traverse._
+  import scalaz.std.list._
+
+
+  // avoid calling Schema.required ro Schema.optional too early : we need the field names
+  def rec[P[_]](props : List[DPropSchema[P]]) : DSchema[P, RuntimeModel] = {
+    val x : FreeAp[PropSchema[RuntimeModel, DSchema[P, ?], ?], RuntimeModel] =
+      props.traverse(p => FreeAp.lift(p).map(p.fieldName -> _)).map(listKV => Fix(RuntimeRecord(listKV.toMap)))
+
+    Schema.rec(x)
+  }
 
 
 }
